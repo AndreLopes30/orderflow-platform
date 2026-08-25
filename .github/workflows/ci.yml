@@ -29,7 +29,35 @@ jobs:
           cache: maven
 
       - name: Run unit and integration tests
-        run: mvn -B -ntp verify
+        shell: bash
+        run: |
+          set -o pipefail
+          mvn -B -ntp -Dstyle.color=never verify 2>&1 | tee maven-verify.log
+
+      - name: Surface Maven diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          annotate() {
+            local content="$1"
+            content="${content//'%'/'%25'}"
+            content="${content//$'\r'/'%0D'}"
+            content="${content//$'\n'/'%0A'}"
+            printf '::error file=pom.xml,title=Maven verify failed::%s\n' "$content"
+          }
+
+          if [[ -f maven-verify.log ]]; then
+            annotate "$(tail -n 160 maven-verify.log)"
+          else
+            annotate "maven-verify.log was not created"
+          fi
+
+          while IFS= read -r report; do
+            annotate "Report: ${report}"$'\n'"$(tail -n 120 "$report")"
+          done < <(find . -type f -path '*/target/*-reports/*.txt' \
+            -exec grep -lE '<<< (FAILURE|ERROR)!' {} + | sort)
 
       - name: Require Testcontainers integration tests to run
         shell: bash
