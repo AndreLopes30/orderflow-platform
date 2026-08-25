@@ -28,6 +28,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers(disabledWithoutDocker = true)
@@ -101,7 +102,9 @@ class OrderFlowIntegrationIT {
                 .singleElement()
                 .satisfies(event -> {
                     assertThat(event.getAggregateId()).isEqualTo(orderId);
-                    assertThat(event.getPayload()).contains(orderId.toString()).contains("\"eventVersion\":1");
+                    JsonNode payload = parseJson(event.getPayload());
+                    assertThat(payload.get("orderId").stringValue()).isEqualTo(orderId.toString());
+                    assertThat(payload.get("eventVersion").intValue()).isEqualTo(1);
                 });
 
         try (var consumer = consumer()) {
@@ -111,7 +114,9 @@ class OrderFlowIntegrationIT {
                 assertThat(records)
                         .anySatisfy(record -> {
                             assertThat(record.key()).isEqualTo(orderId.toString());
-                            assertThat(record.value()).contains(orderId.toString()).contains("\"eventVersion\":1");
+                            JsonNode payload = parseJson(record.value());
+                            assertThat(payload.get("orderId").stringValue()).isEqualTo(orderId.toString());
+                            assertThat(payload.get("eventVersion").intValue()).isEqualTo(1);
                         });
             });
         }
@@ -156,6 +161,14 @@ class OrderFlowIntegrationIT {
         properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         return new KafkaConsumer<>(properties);
+    }
+
+    private JsonNode parseJson(String value) {
+        try {
+            return objectMapper.readTree(value);
+        } catch (Exception exception) {
+            throw new AssertionError("Expected valid JSON payload", exception);
+        }
     }
 
     private String baseUrl() {
