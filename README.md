@@ -1,5 +1,7 @@
 # OrderFlow Platform
 
+[![CI](https://github.com/AndreLopes30/orderflow-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AndreLopes30/orderflow-platform/actions/workflows/ci.yml)
+
 OrderFlow Platform é uma plataforma backend orientada a eventos para receber pedidos, persistir seu estado e processar notificações de forma resiliente. O projeto é um monorepo Maven com dois microsserviços independentes, bancos PostgreSQL separados e integração assíncrona via Apache Kafka.
 
 O foco não é quantidade de tecnologias. Cada componente trata um problema concreto: PostgreSQL mantém o estado durável, a Transactional Outbox remove o dual write ingênuo entre banco e Kafka, o consumidor idempotente tolera redelivery, Redis reduz leituras repetidas, retry topics isolam falhas sem bloquear a partição principal e a DLT preserva eventos esgotados para análise.
@@ -445,9 +447,9 @@ O manifesto `secret.example.yml` é apenas um contrato com placeholders e não �
 
 Não existe deploy automático nem credencial de cloud. O princípio é verificar artefatos, não criar custo.
 
-## Automated End-to-End Validation
+## Automated Validation
 
-A pipeline está preparada para executar no runner Linux do GitHub:
+A pipeline foi executada com sucesso no runner Linux do GitHub e validou:
 
 - testes unitários e de API;
 - integrações reais com PostgreSQL, Kafka e Redis via Testcontainers;
@@ -458,9 +460,9 @@ A pipeline está preparada para executar no runner Linux do GitHub:
 - duplicação deliberada do mesmo `eventId` para provar idempotência;
 - falha `fail-dlt-`, três tentativas, DLT auditável e processamento saudável posterior;
 - health, métricas, Prometheus, Grafana, OpenTelemetry Collector e Tempo;
-- logs como artifact em falha e `docker compose down -v --remove-orphans` em qualquer resultado.
+- teardown com `docker compose down -v --remove-orphans` ao final do job.
 
-Essa pipeline foi preparada e validada estaticamente neste workspace, mas ainda não se afirma execução bem-sucedida no GitHub Actions. A confirmação final depende do primeiro push e da execução do workflow em um runner com Docker.
+A execução pública [CI #4](https://github.com/AndreLopes30/orderflow-platform/actions/runs/32799045256), no commit `c3003a9`, concluiu com sucesso os testes Maven/Testcontainers, os builds das duas imagens e o smoke test distribuído via Docker Compose.
 
 ## 18. Arquitetura AWS sugerida
 
