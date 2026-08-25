@@ -1,0 +1,106 @@
+spring:
+  application:
+    name: notification-service
+  datasource:
+    url: ${NOTIFICATION_DB_URL:jdbc:postgresql://localhost:5433/notifications}
+    username: ${NOTIFICATION_DB_USER:orderflow}
+    password: ${NOTIFICATION_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 3000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    admin:
+      auto-create: true
+      fail-fast: true
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:notification-service-v1}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        isolation.level: read_committed
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        acks: all
+        enable.idempotence: true
+        max.block.ms: 3000
+    listener:
+      ack-mode: record
+      concurrency: ${KAFKA_CONSUMER_CONCURRENCY:3}
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+
+app:
+  kafka:
+    order-created-topic: ${ORDER_CREATED_TOPIC:order.created}
+    partitions: ${ORDER_CREATED_PARTITIONS:3}
+    replicas: ${ORDER_CREATED_REPLICAS:1}
+    retry:
+      attempts: ${ORDER_EVENT_RETRY_ATTEMPTS:3}
+      initial-delay: ${ORDER_EVENT_RETRY_INITIAL_DELAY:1s}
+      multiplier: ${ORDER_EVENT_RETRY_MULTIPLIER:2.0}
+      max-delay: ${ORDER_EVENT_RETRY_MAX_DELAY:5s}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db,kafka
+        liveness:
+          include: livenessState
+  health:
+    readinessstate:
+      enabled: true
+    livenessstate:
+      enabled: true
+  tracing:
+    sampling:
+      probability: ${OTEL_TRACES_SAMPLER_PROBABILITY:1.0}
+    propagation:
+      type: W3C
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+          timeout: 5s
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+logging:
+  structured:
+    format:
+      console: ${LOG_FORMAT:logstash}
+
+info:
+  app:
+    name: ${spring.application.name}
+    description: Idempotently consumes OrderCreated events and demonstrates non-blocking retries and DLT handling

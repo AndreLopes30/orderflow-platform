@@ -1,0 +1,13 @@
+target/
+**/target/
+.idea/
+.vscode/
+*.iml
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+qa/
+dependency-reduced-pom.xml

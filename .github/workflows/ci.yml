@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Maven and Testcontainers
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21 with Maven cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run unit and integration tests
+        run: mvn -B -ntp verify
+
+      - name: Require Testcontainers integration tests to run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t reports < <(find \
+            order-service/target/failsafe-reports \
+            notification-service/target/failsafe-reports \
+            -type f -name 'TEST-*IT.xml' | sort)
+
+          if [[ "${#reports[@]}" -ne 2 ]]; then
+            printf 'Expected 2 Failsafe integration reports, found %s\n' "${#reports[@]}" >&2
+            exit 1
+          fi
+
+          total=0
+          for report in "${reports[@]}"; do
+            grep -Eq 'tests="[1-9][0-9]*"' "$report" || {
+              printf 'No integration tests recorded in %s\n' "$report" >&2
+              exit 1
+            }
+            grep -Eq 'skipped="0"' "$report" || {
+              printf 'Integration tests were skipped in %s\n' "$report" >&2
+              exit 1
+            }
+            count="$(sed -n 's/.* tests="\([0-9][0-9]*\)".*/\1/p' "$report" | head -n 1)"
+            total=$((total + count))
+          done
+
+          if [[ "$total" -ne 3 ]]; then
+            printf 'Expected 3 integration scenarios, found %s\n' "$total" >&2
+            exit 1
+          fi
+          printf 'Confirmed %s Testcontainers scenarios with zero skips.\n' "$total"
+
+      - name: Upload Maven reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-test-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/site/jacoco/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  docker-build:
+    name: Build image (${{ matrix.service }})
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: order-service
+            dockerfile: order-service/Dockerfile
+          - service: notification-service
+            dockerfile: notification-service/Dockerfile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.service }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: orderflow/${{ matrix.service }}:ci
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  e2e:
+    name: Distributed Docker Compose validation
+    needs: [test, docker-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ORDER_EVENT_RETRY_INITIAL_DELAY: 200ms
+      ORDER_EVENT_RETRY_MULTIPLIER: "2.0"
+      ORDER_EVENT_RETRY_MAX_DELAY: 500ms
+      OUTBOX_POLL_INTERVAL: 100ms
+      SMOKE_TIMEOUT_SECONDS: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create ephemeral database passwords
+        shell: bash
+        run: |
+          set -euo pipefail
+          order_password="$(openssl rand -hex 24)"
+          notification_password="$(openssl rand -hex 24)"
+          echo "::add-mask::${order_password}"
+          echo "::add-mask::${notification_password}"
+          printf 'ORDER_DB_PASSWORD=%s\n' "$order_password" >> "$GITHUB_ENV"
+          printf 'NOTIFICATION_DB_PASSWORD=%s\n' "$notification_password" >> "$GITHUB_ENV"
+
+      - name: Validate Compose and smoke-test syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose config --quiet
+          bash -n scripts/smoke-test.sh
+
+      - name: Build and start distributed stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose up -d --build --wait --wait-timeout 300
+          docker compose ps
+
+      - name: Run distributed smoke test
+        shell: bash
+        run: bash scripts/smoke-test.sh
+
+      - name: Print Compose diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          export ORDER_DB_PASSWORD="${ORDER_DB_PASSWORD:-diagnostic-placeholder}"
+          export NOTIFICATION_DB_PASSWORD="${NOTIFICATION_DB_PASSWORD:-diagnostic-placeholder}"
+          docker compose ps --all || true
+          docker compose logs --no-color --timestamps 2>&1 | tee compose.log || true
+
+      - name: Upload Compose logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-e2e-logs
+          path: compose.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Tear down distributed stack
+        if: always()
+        shell: bash
+        run: |
+          export ORDER_DB_PASSWORD="${ORDER_DB_PASSWORD:-teardown-placeholder}"
+          export NOTIFICATION_DB_PASSWORD="${NOTIFICATION_DB_PASSWORD:-teardown-placeholder}"
+          docker compose down -v --remove-orphans

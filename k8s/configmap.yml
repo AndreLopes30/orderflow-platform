@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orderflow-config
+data:
+  ORDER_DB_URL: jdbc:postgresql://order-postgres:5432/orders
+  ORDER_DB_USER: orderflow
+  NOTIFICATION_DB_URL: jdbc:postgresql://notification-postgres:5432/notifications
+  NOTIFICATION_DB_USER: orderflow
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  ORDER_CACHE_TTL: PT10M
+  ORDER_CREATED_TOPIC: order.created
+  ORDER_CREATED_PARTITIONS: "3"
+  ORDER_CREATED_REPLICAS: "1"
+  KAFKA_CONSUMER_CONCURRENCY: "3"
+  MANAGEMENT_TRACING_EXPORT_ENABLED: "false"
+  LOG_FORMAT: logstash
